@@ -1,5 +1,18 @@
+// Endpoint Vercel pour créer/mettre à jour un contact Système.io + appliquer un tag
+// IDs des tags intégrés en dur (plus simple à maintenir)
+
+const TAGS = {
+  enfants_salon: 1614985,
+  tai_chi_salon: 1614987,
+  adultes_salon: 614988,
+  enfants_alleins: 1614989,
+  adultes_marseille: 1614990,
+};
+
+const API_BASE = 'https://api.systeme.io';
+
 function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', '*'); // tu peux restreindre à ton domaine SIO
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -10,7 +23,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    // Tente de lire le body proprement même si non parsé
+    // Lecture body (parfois req.body est vide sur Vercel)
     let body = req.body;
     if (!body) {
       const chunks = [];
@@ -25,33 +38,27 @@ export default async function handler(req, res) {
     }
 
     const apiKey = process.env.SIO_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: 'SIO_API_KEY manquante' });
+    if (!apiKey) return res.status(500).json({ error: 'SIO_API_KEY manquante (configure-la dans Vercel > Settings > Environment Variables)' });
 
-    const TAG_MAP = {
-      enfants_salon: process.env.TAG_ENFANTS_SALON,
-      tai_chi_salon: process.env.TAG_TAI_CHI,
-      adultes_salon: process.env.TAG_ADULTES_SALON,
-      enfants_alleins: process.env.TAG_ENFANTS_ALLEINS,
-      adultes_marseille: process.env.TAG_ADULTES_MARSEILLE
-    };
-    const tagId = TAG_MAP[creneau];
-    if (!tagId) return res.status(400).json({ error: 'Tag non configuré pour ce créneau', creneau });
+    // Résolution de l'ID du tag
+    const tagId = TAGS[creneau];
+    if (!tagId) {
+      return res.status(400).json({ error: 'Tag non configuré pour ce créneau', creneau });
+    }
 
-    // 1) Création / MAJ contact — on remonte TOUT (status + body) si ça échoue
-    const createRes = await fetch('https://api.systeme.io/api/contacts', {
+    // 1) Créer / mettre à jour le contact
+    const createRes = await fetch(`${API_BASE}/api/contacts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
       body: JSON.stringify({
         email,
         lastName
-        // , fields: [{ slug: 'creneau', value: creneau }] // si tu crées ce champ personnalisé
       })
     });
 
     const createText = await createRes.text();
     let createJson = null;
     try { createJson = JSON.parse(createText); } catch {}
-
     if (!createRes.ok) {
       return res.status(createRes.status).json({
         error: 'Échec création/MAJ contact',
@@ -65,8 +72,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Impossible de récupérer l'ID du contact", response: createJson || createText });
     }
 
-    // 2) Assignation du tag — on remonte aussi le détail
-    const tagRes = await fetch(`https://api.systeme.io/api/contacts/${contactId}/tags`, {
+    // 2) Assigner le tag
+    const tagRes = await fetch(`${API_BASE}/api/contacts/${contactId}/tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
       body: JSON.stringify({ tagId })
@@ -74,6 +81,7 @@ export default async function handler(req, res) {
 
     const tagText = await tagRes.text();
     if (!tagRes.ok) {
+      console.error('Assignation tag échouée:', { status: tagRes.status, body: tagText.slice(0, 400) });
       return res.status(207).json({
         ok: true,
         warning: 'Contact créé, mais tag non appliqué',
@@ -84,6 +92,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true });
   } catch (err) {
+    console.error('SERVER ERROR:', err);
     return res.status(500).json({ error: 'Erreur serveur', details: String(err?.message || err) });
   }
 }
